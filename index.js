@@ -9,9 +9,6 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send("Welcome to Multisync 10fastfinger Gemini AI API!");
-});
 app.use("/api", generateRoute);
 
 app.listen(PORT, () => {
