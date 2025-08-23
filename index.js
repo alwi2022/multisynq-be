@@ -3,9 +3,9 @@ const express = require("express");
 const cors = require("cors");
 const generateRoute = require("./routes/generate");
 const leaderboardRoute = require("./routes/leaderboard");
+const chatRoute = require("./routes/chat");
 const connectDB = require("./config/db");
 const app = express();
-
 
 const PORT = process.env.PORT || 5000;
 
@@ -14,6 +14,8 @@ app.use(express.json());
 
 // ✅ Add both routes
 app.use("/api", generateRoute);
+app.use("/api", chatRoute);
+
 app.use("/api/leaderboard", leaderboardRoute);
 // Health check endpoint
 app.get("/health", (req, res) => {
