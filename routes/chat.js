@@ -1,64 +1,36 @@
-// routes/chat.js (CommonJS, selaras dengan kode kamu)
-const express = require("express");
+const express = require('express');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const generateContent = require('../config/generate-content');
+const buildChatPrompt = require('../config/chat-prompt');
 const router = express.Router();
-const {
-  GoogleGenerativeAI,
-  HarmCategory,
-  HarmBlockThreshold,
-} = require("@google/generative-ai");
-
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-function toGeminiContents(messages = []) {
-  return messages
-    .filter((m) => m && m.content)
-    .filter((m) => m.role !== "system")
-    .map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
-}
-
-router.post("/chat", async (req, res) => {
+router.post('/chat', async (req, res) => {
+  const { context, system, messages, lang = 'id' } = req.body || {};
+  const validContext = context && typeof context === 'object' && !Array.isArray(context) && context.name === 'Imam Bahri Alwi' && typeof context.summary === 'string' && Array.isArray(context.experience) && Array.isArray(context.projects) && JSON.stringify(context).length <= 60000;
+  // Accept legacy server-generated prompts while the existing frontend is upgraded.
+  const validLegacy = typeof system === 'string' && system.trim() && system.length <= 60000;
+  if ((!validContext && !validLegacy) || (lang !== 'id' && lang !== 'en') || !Array.isArray(messages) || !messages.length || messages.length > 20 || messages.some(m => !m || !['user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > (m.role === 'user' ? 2000 : 8000)) || messages.at(-1)?.role !== 'user') {
+    return res.status(400).json({ error: 'Valid portfolio context and messages are required' });
+  }
+  const controller = new AbortController();
+  res.on('close', () => { if (!res.writableEnded) controller.abort(); });
   try {
-    const { system, messages = [], lang = "en" } = req.body || {};
-    if (!system || !messages.length) {
-      return res.status(400).json({ error: "system and messages are required" });
-    }
-
-    const guard =
-      lang === "id"
-        ? "Jika pertanyaan tidak terkait Alwi, arahkan kembali dengan sopan."
-        : "If the question is unrelated to Alwi, politely steer back.";
-
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash", // cepat & ekonomis; bisa diganti kapan saja
-      systemInstruction: `${system}\n\n${guard}`,
+      model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+      systemInstruction: buildChatPrompt({ context: validContext ? context : undefined, system, lang }),
     });
-
-    const result = await model.generateContent({
-      contents: toGeminiContents(messages),
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-      ],
-      generationConfig: {
-        temperature: 0.2, // lebih stabil utk jawaban HR
-        // NOTE: jangan pakai responseMimeType: "application/json" kalau kamu tidak butuh output JSON khusus
-      },
-    });
-
-    const reply =
-      (result && result.response && typeof result.response.text === "function"
-        ? result.response.text()
-        : "") || "";
-
-    return res.json({ reply });
-  } catch (err) {
-    console.error("Gemini Chat Error:", err?.message || err);
-    return res.status(500).json({ error: "Failed to generate content" });
+    const result = await generateContent(model, {
+      contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+      generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
+    }, undefined, controller.signal);
+    const reply = result.response.text().trim();
+    if (!reply) return res.status(502).json({ error: 'No answer returned' });
+    return res.json({ reply: reply.slice(0, 8000) });
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    console.error('Gemini chat request failed:', error.status || error.name);
+    return res.status(error.temporary ? 503 : 502).json({ error: 'AI temporarily unavailable. Please try again.' });
   }
 });
 

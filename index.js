@@ -4,13 +4,13 @@ const cors = require("cors");
 const generateRoute = require("./routes/generate");
 const leaderboardRoute = require("./routes/leaderboard");
 const chatRoute = require("./routes/chat");
-const connectDB = require("./config/db");
+const { checkDatabase } = require("./config/db");
 const app = express();
 
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '128kb' }));
 
 // ✅ Add both routes
 app.use("/api", generateRoute);
@@ -25,11 +25,9 @@ app.get("/health", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-  connectDB()
-    .then(() => console.log("✅ Database connected"))
-    .catch((err) =>
-      console.error("❌ Database connection error:", err.message)
-    );
+const server = app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${server.address().port}`);
+  checkDatabase()
+    .then(() => console.log("PostgreSQL connected"))
+    .catch(() => console.warn("Leaderboard database unavailable; chat and generation remain online"));
 });

@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const generateContent = require('../config/generate-content');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -13,7 +14,7 @@ router.post("/generate", async (req, res) => {
 
   try {
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite",
       generationConfig: {
         temperature: 1,
         topP: 0.95,
@@ -22,7 +23,7 @@ router.post("/generate", async (req, res) => {
         responseMimeType: "application/json",
       },
     });
-    const result = await model.generateContent(prompt);
+    const result = await generateContent(model, prompt);
     const text = result.response.text();
     console.log("🧠 Raw Gemini Output:\n", text);
 

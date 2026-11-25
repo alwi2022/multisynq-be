@@ -1,63 +1,43 @@
-const express = require("express");
+const express = require('express');
+const { createScore, getTopScores, deleteScore } = require('../models/score');
 const router = express.Router();
-const Score = require("../models/score");
+const unavailableCodes = new Set(['DATABASE_UNAVAILABLE', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', '28P01', '3D000', '3F000', '42P01', '53300', '57P01', '08006', '08001']);
 
-// POST /api/leaderboard
-router.post("/", async (req, res) => {
-  try {
-    const { initials, score, avatarUrl, wpm, accuracy } = req.body;
+function databaseError(res, error) {
+  console.error('Leaderboard database error:', error.code || 'UNKNOWN');
+  const unavailable = unavailableCodes.has(error.code) || /timeout|connection terminated/i.test(error.message || '');
+  return res.status(unavailable ? 503 : 500).json({ error: unavailable ? 'Leaderboard database unavailable' : 'Internal server error' });
+}
 
-    const newScore = new Score({
-      initials,
-      score,
-      avatarUrl,
-      wpm,
-      accuracy,
-    });
-
-    await newScore.save();
-    res.status(201).json({ message: "Score saved!" });
-  } catch (err) {
-    console.error("❌ Error saving score:", err.message);
-    res.status(500).json({ error: "Internal server error" });
+router.post('/', async (req, res) => {
+  const { initials, score, avatarUrl, wpm, accuracy } = req.body || {};
+  if (typeof initials !== 'string' || !initials.trim() || initials.trim().length > 32 ||
+      typeof score !== 'number' || !Number.isFinite(score) || score < 0 ||
+      (avatarUrl != null && (typeof avatarUrl !== 'string' || avatarUrl.length > 2048)) ||
+      (wpm != null && (typeof wpm !== 'number' || !Number.isFinite(wpm) || wpm < 0)) ||
+      (accuracy != null && (typeof accuracy !== 'number' || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 100))) {
+    return res.status(400).json({ error: 'Invalid score data' });
   }
+  try {
+    await createScore({ initials: initials.trim(), score, avatarUrl, wpm, accuracy });
+    return res.status(201).json({ message: 'Score saved!' });
+  } catch (error) { return databaseError(res, error); }
 });
 
-// GET /api/leaderboard
-router.get("/", async (req, res) => {
-    try {
-      const scores = await Score.find()
-        .select("_id initials score avatarUrl wpm accuracy timestamp");
-  
-      // Apply same composite scoring as frontend
-      const scored = scores.map(entry => ({
-        ...entry.toObject(),
-        compositeScore: entry.score * 2 + entry.accuracy * 1 + entry.wpm * 1.5,
-      }));
-  
-      // Sort by composite score and limit to 5
-      const topScores = scored
-        .sort((a, b) => b.compositeScore - a.compositeScore)
-        .slice(0, 5);
-  
-      res.json(topScores);
-    } catch (err) {
-      console.error("❌ Error fetching leaderboard:", err.message);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
+router.get('/', async (req, res) => {
+  try { return res.json(await getTopScores()); }
+  catch (error) { return databaseError(res, error); }
+});
 
-router.delete("/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const result = await Score.findByIdAndDelete(id);
-  
-      if (!result) return res.status(404).json({ error: "Score not found" });
-      res.json({ message: "Score deleted successfully" });
-    } catch (err) {
-      console.error("❌ Error deleting score:", err.message);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
+router.delete('/:id', async (req, res) => {
+  // Preserve compatibility with MongoDB IDs in imported scores.
+  if (!/^(?:[a-f0-9]{24}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.test(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid score ID' });
+  }
+  try {
+    if (!await deleteScore(req.params.id)) return res.status(404).json({ error: 'Score not found' });
+    return res.json({ message: 'Score deleted successfully' });
+  } catch (error) { return databaseError(res, error); }
+});
 
 module.exports = router;
